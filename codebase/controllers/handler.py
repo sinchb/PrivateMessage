@@ -1,4 +1,4 @@
-
+#coding=utf-8
 from time import sleep, time
 from uuid import uuid4
 import logging
@@ -7,14 +7,15 @@ import threading
 from tornado.websocket import WebSocketHandler
 from tornado.ioloop import IOLoop
 from tornado import gen
+from tornado.web import authenticated
 from tornado.concurrent import run_on_executor
 from concurrent.futures import ThreadPoolExecutor
 from ujson import dumps
 
 from utils import enc, dec
-
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger('PrivateMessage')
+from logger import logger
+from models.user import User
+from models.message import Message
 
 class BaseWSHandler(WebSocketHandler):
 
@@ -24,11 +25,12 @@ class BaseWSHandler(WebSocketHandler):
     CONN_LOCK = threading.Lock()
 
 
-    R_UNREAD_KEY = 'unread:v1:%s'
-    
+    R_UNREAD_KEY = 'unread:v1:%s:%s'
+
     def __init__(self, application, request, **kwargs):
         self.connid = 'NOPE'
         self.remote_ip = None
+        self.user_email = None
 
         super(BaseWSHandler, self).__init__(
             application, request, **kwargs
@@ -38,7 +40,7 @@ class BaseWSHandler(WebSocketHandler):
         try:
             event_msg = enc(name, args)
             self.write_message(message=event_msg, binary=True)
-        except Exception as err:
+        except Exception:
             logger.exception('Unexcepted Error in emit')
             return False
 
@@ -54,7 +56,8 @@ class BaseWSHandler(WebSocketHandler):
 
         super(BaseWSHandler, self).open()
 
-        # TODO: timer, ping
+    def get_current_user(self):
+        return User.objects(email=self.user_email).first()
 
     def on_message(self, msg):
         """
@@ -92,19 +95,27 @@ class PrivateMessageHandler(BaseWSHandler):
     def __init__(self, *args, **kwargs):
 
         self.handle_func = {
-            'INIT': self.init,
 
             'LIST_CONTACTS_UNREAD': self.handle_list_contacts,
-            'UNREAD_UPDATE': self.handle_update_unread,
+            'UNREAD_UPDATE': self.notify_update_unread,
             'CREATE_CONTACT': self.handle_create_contact,
             'DELETE_CONTACT': self.handle_delete_contact,
-            'UPDATE_CONTACT': self.handle_update_contact,
+            'UPDATE_CONTACT': self.notify_update_contact,
 
             'CHAT_WITH': self.handle_chat_with,
             'CHAT_HISTORY': self.handle_chat_history,
             'CHAT_DELETE': self.handle_chat_delete,
             'CHAT_SEND_MSG': self.handle_chat_send_msg,
         }
+        super(PrivateMessageHandler, self).__init__(self, *args, **kwargs)
+
+    @property
+    def __unread_key(self, chater):
+        return self.R_UNREAD_KEY % (self.current_user.email, chater)
+
+    @property
+    def redis(self):
+        return self.settings['redis']
 
     def on_event(self, name, args):
         logger.info('Received (%s) %s with %s', self.connid, name, dumps(args))
@@ -123,22 +134,27 @@ class PrivateMessageHandler(BaseWSHandler):
         email = args['email']
         passwd = args['email']
 
+        user = User.objects(email=email, passwd=passwd).first()
+        self.user_email = user.email
+        return self.reply_ok()
+
     def handle_init(self, args):
         """
-        初始化工作
+        初始化工作，主要返回一个验证Token
         """
         pass
 
-
+    @authenticated
     def handle_list_contacts(self, args):
         """
         获取用户联系人列表和未读信息数量
         """
         contacts = {}
-        pip = self.redis.pipeline()
 
-        keys = (self.UNREAD_UPDATE % email for email in
-                self.current_user.contacts)
+        keys = (
+            self.__unread_key(email)
+            for email in self.current_user.contacts
+        )
 
         unread_count = self.redis.mget(keys)
         for email, count in zip(keys, unread_count):
@@ -146,6 +162,8 @@ class PrivateMessageHandler(BaseWSHandler):
 
         self.reply_ok({'contacts': contacts})
 
+
+    @authenticated
     def handle_create_contact(self, args):
         """
         添加新的联系人
@@ -156,70 +174,87 @@ class PrivateMessageHandler(BaseWSHandler):
         if not User.objects(email=email).first():
             return self.reply_fail(msg='User Not Exists')
 
-        # Atomic update. Add email to contacts only 
+        # Atomic update. Add email to contacts only
         # if it's not in the contacts already
         self.current_user.update(add_to_set__contacts=email)
         return self.reply_ok()
 
+    @authenticated
     def handle_delete_contact(self, args):
         """
         删除联系人
         """
-        pass
+        email = args['user'].strip()
+        self.current_user.update(pull__contacts=email)
+        return self.reply_ok()
 
-    def handle_update_contact(self):
+    def notify_update_contact(self):
         """
-        更新联系人信息
-        """
-        pass
-    
-    def handle_update_unread(self, args):
-        """
-        更新未读信息数量
+        NOTIFICATION: 更新联系人信息
         """
         pass
 
+    def notify_update_unread(self, args):
+        """
+        NOTIFICATION: 更新未读信息数量
+        """
+        pass
+
+    @authenticated
     def handle_chat_with(self, args):
         """
         开始聊天
         """
-        pass
+        email = args['user']
 
+        # clear unread count
+        self.redis.set(self.__unread_key(email), 0)
+
+    @authenticated
     def handle_chat_delete(self, args):
         """
         删除聊天记录
         """
-        pass
+        Message.delete(id=args['id'])
+        self.reply_ok()
 
+    @authenticated
     def handle_chat_send_msg(self, args):
         """
         发送私信
         """
-        pass
+        msg_id = Message.create(
+            content=args['content'],
+            from_email=self.current_user.email,
+            to_email=args['to_email']
+        )
+        return self.reply_ok({'id': msg_id})
 
+    @authenticated
     def handle_chat_history(self, args):
         """
         获取历史消息
         """
-        pass
+        page = args['page']
+        page_size = args['page_size']
+        to_email = args['user']
 
-    def reply_ok(self, args):
+    def reply_ok(self, args=None):
+        if args is None:
+            args = {}
         self.emit('OK', args)
 
-    def reply_fail(self, args):
-        self.emit('FAIL', args)
+    def reply_fail(self, msg):
+        self.emit('FAIL', {'msg': msg})
 
 if __name__ == '__main__':
     # Just for test
     import tornado
     application = tornado.web.Application(
-            [
-                (r'/ws', BaseWSHandler)
-            ],
+        [(r'/ws', BaseWSHandler)],
     )
     port = 9999
-    application.listen(9999)
+    application.listen(port)
     logger.info('Start websocket server in %d', port)
 
     tornado.ioloop.IOLoop.instance().start()
-

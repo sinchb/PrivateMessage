@@ -3,6 +3,7 @@ from utils import dec, enc
 
 class DummyClient(WebSocketClient):
     def opened(self):
+        import pdb;pdb.set_trace()
         msg = enc('OK', {'event': 'FUCK'})
         self.send(msg)
 
@@ -16,9 +17,8 @@ class DummyClient(WebSocketClient):
 
 if __name__ == '__main__':
     try:
-        ws = DummyClient('ws://localhost:9999/ws', protocols=['http-only', 'chat'])
+        ws = DummyClient('ws://localhost:8888/chat', protocols=['http-only', 'chat'])
         ws.connect()
         ws.run_forever()
     except KeyboardInterrupt:
         ws.close()
-

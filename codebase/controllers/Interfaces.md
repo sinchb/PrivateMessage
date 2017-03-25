@@ -137,6 +137,10 @@ event: ``CHAT_SEND_MSG``
 ```
 ### <<< Response
 event: ``OK``
+```python
+{
+  'id': '58d2384deba27c5fb1e7600e'
+}
 
 ## 删除记录
 ### >>> Request
