@@ -59,6 +59,12 @@ class BaseWSHandler(WebSocketHandler):
     def get_current_user(self):
         return User.objects(email=self.user_email).first()
 
+    @property
+    def current_user(self):
+        user = super(BaseWSHandler, self).current_user
+        user.reload()
+        return user
+
     def on_message(self, msg):
         """
         Received raw message.
@@ -92,26 +98,34 @@ class BaseWSHandler(WebSocketHandler):
 
 class PrivateMessageHandler(BaseWSHandler):
 
-    def __init__(self, *args, **kwargs):
+    # email -> ws conncetions
+    routes = {}
+    ROUTES_LOCK = threading.Lock()
+
+    def __init__(self, application, *args, **kwargs):
 
         self.handle_func = {
 
+            'LOGON': self.handle_logon,
+            'LOGIN': self.handle_login,
+
             'LIST_CONTACTS_UNREAD': self.handle_list_contacts,
-            'UNREAD_UPDATE': self.notify_update_unread,
+
             'CREATE_CONTACT': self.handle_create_contact,
             'DELETE_CONTACT': self.handle_delete_contact,
-            'UPDATE_CONTACT': self.notify_update_contact,
+
+            'NOTIFY_UPDATE_CONTACT': self.notify_update_contact,
+            'NOTIFY_UPDATE_UNREAD': self.notify_update_unread,
 
             'CHAT_WITH': self.handle_chat_with,
             'CHAT_HISTORY': self.handle_chat_history,
             'CHAT_DELETE': self.handle_chat_delete,
             'CHAT_SEND_MSG': self.handle_chat_send_msg,
         }
-        super(PrivateMessageHandler, self).__init__(self, *args, **kwargs)
+        super(PrivateMessageHandler, self).__init__(application, *args, **kwargs)
 
-    @property
-    def __unread_key(self, chater):
-        return self.R_UNREAD_KEY % (self.current_user.email, chater)
+    def __unread_key(self, from_email='*', to_email='*'):
+        return self.R_UNREAD_KEY % (from_email, to_email)
 
     @property
     def redis(self):
@@ -122,27 +136,68 @@ class PrivateMessageHandler(BaseWSHandler):
 
         try:
             handler = self.handle_func[name]
-            handler(name, args)
+            handler(args)
         except:
             logger.exception('Error (%s) %s', self.connid, name)
             self.close()
 
-    def handle_auth(self, args):
+    def handle_login(self, args):
         """
         登录验证
         """
         email = args['email']
-        passwd = args['email']
+        password = args['password']
 
-        user = User.objects(email=email, passwd=passwd).first()
+        if not User.exists(email):
+            self.reply_fail(msg='User Not Exists')
+            return
+
+        user = User.get(email, password)
+        if not user:
+            return self.reply_fail(msg='Wrong User or Password')
+
         self.user_email = user.email
+
+        self.routes[self.user_email] = self
         return self.reply_ok()
+
+    def get_peer_conn(self, email):
+        """
+        通过email获取实时的WebSocket连接
+        """
+        return self.routes.get(email)
+
+    def on_close(self, *args, **kwargs):
+        """
+        清除路由信息
+        """
+        logger .warning('Connection %s is closed', self.connid)
+
+        if not self.user_email:
+            return
+
+        with self.ROUTES_LOCK:
+            self.routes.pop(self.user_email, None)
 
     def handle_init(self, args):
         """
         初始化工作，主要返回一个验证Token
         """
         pass
+
+    def handle_logon(self, args):
+        """
+        注册一个用户
+        """
+        email = args['email'].lower()
+        password = args['password']
+        if User.exists(email):
+            self.reply_fail(msg='User Exists Already')
+            return
+        else:
+            User.create(email, password)
+            self.reply_ok()
+            return
 
     @authenticated
     def handle_list_contacts(self, args):
@@ -151,17 +206,18 @@ class PrivateMessageHandler(BaseWSHandler):
         """
         contacts = {}
 
-        keys = (
-            self.__unread_key(email)
+        keys = [
+            self.__unread_key(to_email=self.user_email)
             for email in self.current_user.contacts
-        )
+        ]
 
-        unread_count = self.redis.mget(keys)
-        for email, count in zip(keys, unread_count):
+        unread_count = []
+        if keys:
+            unread_count = self.redis.mget(keys)
+        for email, count in zip(self.current_user.contacts, unread_count):
             contacts[email] = 0 if count is None else count
 
         self.reply_ok({'contacts': contacts})
-
 
     @authenticated
     def handle_create_contact(self, args):
@@ -171,7 +227,7 @@ class PrivateMessageHandler(BaseWSHandler):
         email = args['user'].strip()
 
         # Check if user exists
-        if not User.objects(email=email).first():
+        if not User.exists(email):
             return self.reply_fail(msg='User Not Exists')
 
         # Atomic update. Add email to contacts only
@@ -194,11 +250,16 @@ class PrivateMessageHandler(BaseWSHandler):
         """
         pass
 
-    def notify_update_unread(self, args):
+    def notify_update_unread(self, to_email, count):
         """
         NOTIFICATION: 更新未读信息数量
         """
-        pass
+        peer_conn = self.get_peer_conn(email)
+        if not peer_conn:
+            return
+
+        args = {self.user_email: count}
+        peer_conn.emit('NOTIFY_UPDATE_UNREAD', args)
 
     @authenticated
     def handle_chat_with(self, args):
@@ -207,8 +268,10 @@ class PrivateMessageHandler(BaseWSHandler):
         """
         email = args['user']
 
-        # clear unread count
-        self.redis.set(self.__unread_key(email), 0)
+        # 将未读数量清除
+        self.redis.delete(self.__unread_key(self.user_email, to_email))
+
+        self.notify_update_unread(email, 0)
 
     @authenticated
     def handle_chat_delete(self, args):
@@ -228,6 +291,10 @@ class PrivateMessageHandler(BaseWSHandler):
             from_email=self.current_user.email,
             to_email=args['to_email']
         )
+
+        unread_key = self.__unread_key(self.user_email, args['to_email'])
+        self.redis.inc(unread_key)
+
         return self.reply_ok({'id': msg_id})
 
     @authenticated

@@ -3,15 +3,17 @@
 Private Message Model
 """
 
+from datetime import datetime
+
 from mongoengine import Document
-from mongoengine.fields import EmailField, IntField, DateTimeField
+from mongoengine.fields import EmailField, IntField, DateTimeField, StringField
 
 class Message(Document):
-    
-    from_email = EmailFiled(required=True)
-    to_email = EmailFiled(required=True)
+
+    from_email = EmailField(required=True)
+    to_email = EmailField(required=True)
     content = StringField(required=True, default=u'')
-    ctime = DateTimeFiled(default=datetime.now)
+    ctime = DateTimeField(default=datetime.now)
 
     # 消息未读
     M_UNREAD = 0
@@ -53,7 +55,7 @@ class Message(Document):
         for record in records:
             result.append({
                 'content': record.content,
-                'ctime': record.ctime.isoformat()
+                'ctime': record.ctime.isoformat(),
                 'from_email': from_email,
                 'to_email': to_email
             })

@@ -5,6 +5,33 @@
 * \>>> 为client向服务发送事件
 * \<<< 为server向client发送事件
 
+
+## 注册
+### >>> Request
+event ``LOGON``
+```python
+{
+    'user': 'sinchb128@gmail.com',
+    'password': '123456'
+}
+```
+
+## 登录
+```python
+{
+    'user': 'sinchb128@gmail.com':
+    'password': '123456'
+}
+```
+
+### 
+event ``LOGIN``
+```python
+{
+}
+
+```
+
 ## 获取所有联系人以及未读消息数量
 ### >>> Request
 event: ``LIST_CONTACTS_UNREAD``
@@ -23,7 +50,7 @@ event: ``LIST_CONTACTS_UNREAD``
 
 ## 未读消息数更新
 ### <<< Request
-event: ``UNREAD_UPDATE``
+event: ``NOTIFY_UPDATE_UNREAD``
 ```python
 {
   'unread_msg_count': {
@@ -66,7 +93,7 @@ event: ``OK``
 
 ## 联系人列表更新
 ### <<< Request
-event: UPDATE_CONTACT
+event: NOTIFY_UPDATE_CONTACT
 ```python
 {
   'contacts': {
@@ -141,6 +168,16 @@ event: ``OK``
 {
   'id': '58d2384deba27c5fb1e7600e'
 }
+```
+
+## 收到私信
+### >>> Request
+event: ``CHAT_RECEIVE_MSG``
+```python
+{
+    'content':
+}
+```
 
 ## 删除记录
 ### >>> Request

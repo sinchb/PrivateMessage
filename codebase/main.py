@@ -1,21 +1,22 @@
 
 import tornado.ioloop
 import tornado.web
-from controllers.handler import PrivateMessageHandler
+from controllers.handler import PrivateMessageHandler, BaseWSHandler
 
 from redis import StrictRedis
 from mongoengine import connect
 
 from logger import logger
 
-connect('localhost')
+connect('private_message')
 
 redis = StrictRedis(host='localhost', port=6379, db=0)
 
 def make_app():
     return tornado.web.Application(
         [(r"/chat", PrivateMessageHandler)],
-        settings={'redis': redis}
+        redis=redis,
+        autoreload=True
     )
 
 if __name__ == "__main__":
