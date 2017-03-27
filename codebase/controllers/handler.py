@@ -59,12 +59,6 @@ class BaseWSHandler(WebSocketHandler):
     def get_current_user(self):
         return User.objects(email=self.user_email).first()
 
-    @property
-    def current_user(self):
-        user = super(BaseWSHandler, self).current_user
-        user.reload()
-        return user
-
     def on_message(self, msg):
         """
         Received raw message.
@@ -232,7 +226,7 @@ class PrivateMessageHandler(BaseWSHandler):
 
         # Atomic update. Add email to contacts only
         # if it's not in the contacts already
-        self.current_user.update(add_to_set__contacts=email)
+        self.current_user.modify(add_to_set__contacts=email)
         return self.reply_ok()
 
     @authenticated
@@ -241,7 +235,7 @@ class PrivateMessageHandler(BaseWSHandler):
         删除联系人
         """
         email = args['user'].strip()
-        self.current_user.update(pull__contacts=email)
+        self.current_user.modify(pull__contacts=email)
         return self.reply_ok()
 
     def notify_update_contact(self):
