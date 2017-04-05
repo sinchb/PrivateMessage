@@ -31,9 +31,11 @@ class Message(Document):
         """
         Create message
         """
-        msg = cls(from_email=from_email, to_email=to_email, content=content)
-        msg.save()
-        return str(msg.id)
+        return cls(
+            from_email=from_email,
+            to_email=to_email,
+            content=content
+        ).save()
 
     @classmethod
     def delete(cls, id):
@@ -41,6 +43,13 @@ class Message(Document):
         Delete message
         """
         cls.ojbects(id=id).update(set__status=self.M_DELETE)
+
+    @classmethod
+    def read(cls, id):
+        """
+        Set message as read
+        """
+        cls.objects(id=id).update(set__status=cls.M_READ)
 
     @classmethod
     def fetch_history(cls, from_email, to_email, page=1, page_size=20):

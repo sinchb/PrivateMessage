@@ -201,7 +201,7 @@ class PrivateMessageHandler(BaseWSHandler):
         contacts = {}
 
         keys = [
-            self.__unread_key(to_email=self.user_email)
+            self.__unread_key(to_email=self.user_email, from_email=email)
             for email in self.current_user.contacts
         ]
 
@@ -244,11 +244,35 @@ class PrivateMessageHandler(BaseWSHandler):
         """
         pass
 
+    def notify_msg(self, to_email, content, time, msg_id):
+        """
+        NOTIFICATION: 发送私信给对方
+        """
+        args = {
+            'msg': {
+                'content': content.encode('utf-8'),
+                'time': time,
+                'from_email': self.user_email,
+                'msg_id': msg_id
+            }
+        }
+
+        peer_conn = self.get_peer_conn(to_email)
+        if not peer_conn:
+            return False
+        try:
+            peer_conn.emit('NOTIFY_NEW_MSG', args)
+        except:
+            raise
+            return False
+        return True
+
+
     def notify_update_unread(self, to_email, count):
         """
         NOTIFICATION: 更新未读信息数量
         """
-        peer_conn = self.get_peer_conn(email)
+        peer_conn = self.get_peer_conn(to_email)
         if not peer_conn:
             return
 
@@ -260,12 +284,17 @@ class PrivateMessageHandler(BaseWSHandler):
         """
         开始聊天
         """
-        email = args['user']
+        to_email = args['user']
 
         # 将未读数量清除
-        self.redis.delete(self.__unread_key(self.user_email, to_email))
+        key = self.__unread_key(
+            from_email=args['user'],
+            to_email=self.user_email
+        )
 
-        self.notify_update_unread(email, 0)
+        self.redis.delete(key)
+
+        self.notify_update_unread(to_email, 0)
 
     @authenticated
     def handle_chat_delete(self, args):
@@ -280,16 +309,25 @@ class PrivateMessageHandler(BaseWSHandler):
         """
         发送私信
         """
-        msg_id = Message.create(
+        msg = Message.create(
             content=args['content'],
             from_email=self.current_user.email,
             to_email=args['to_email']
         )
 
         unread_key = self.__unread_key(self.user_email, args['to_email'])
-        self.redis.inc(unread_key)
+        print unread_key
+        import pdb;pdb.set_trace()
+        self.redis.incr(unread_key, 1)
 
-        return self.reply_ok({'id': msg_id})
+        flag = self.notify_msg(
+            args['to_email'],
+            args['content'],
+            str(msg.ctime),
+            str(msg.id)
+        )
+
+        return self.reply_ok({'id': str(msg.id)})
 
     @authenticated
     def handle_chat_history(self, args):

@@ -170,6 +170,19 @@ event: ``OK``
 }
 ```
 
+## 接收私信
+### <<< Request
+event: ``NOTIFY_NEW_MSG``
+```python
+{
+    'msg': {
+        'content': 'How are you?',
+        'time': '2017-03-22T16:34:26.272345',
+        'from_email': 'sinchb128@gmail.com',
+    }
+}
+```
+
 ## 收到私信
 ### >>> Request
 event: ``CHAT_RECEIVE_MSG``
